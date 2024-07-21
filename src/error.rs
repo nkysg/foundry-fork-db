@@ -10,7 +10,7 @@ use std::{
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
 
 /// Errors that can happen when working with [`revm::Database`]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 #[allow(missing_docs)]
 pub enum DatabaseError {
     #[error("missing bytecode for code hash {0}")]

@@ -489,6 +489,13 @@ where
     }
 }
 
+/// mode for the `SharedBackend::do_get_storage` function
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mode {
+    Cache,
+    Backend,
+}
+
 /// A cloneable backend type that shares access to the backend data with all its clones.
 ///
 /// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandler`
@@ -526,6 +533,9 @@ pub struct SharedBackend {
     /// There is only one instance of the type, so as soon as the last `SharedBackend` is deleted,
     /// `FlushJsonBlockCacheDB` is also deleted and the cache is flushed.
     cache: Arc<FlushJsonBlockCacheDB>,
+
+    /// The mode for the `SharedBackend::do_get_storage` function
+    mode: Mode,
 }
 
 impl SharedBackend {
@@ -596,7 +606,7 @@ impl SharedBackend {
         let (backend, backend_rx) = channel(1);
         let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
-        (Self { backend, cache }, handler)
+        (Self { backend, cache, mode: Mode::Backend }, handler)
     }
 
     /// Updates the pinned block to fetch data from
@@ -636,10 +646,37 @@ impl SharedBackend {
 
     fn do_get_storage(&self, address: Address, index: U256) -> DatabaseResult<U256> {
         tokio::task::block_in_place(|| {
+            if self.mode == Mode::Cache {
+                let value = self
+                    .cache
+                    .0
+                    .db()
+                    .storage
+                    .read()
+                    .get(&address)
+                    .and_then(|acc| acc.get(&index).copied());
+                if let Some(value) = value {
+                    return Ok(value);
+                }
+            }
+
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::Storage(address, index, sender);
             self.backend.clone().try_send(req)?;
-            rx.recv()?
+            let res = rx.recv()?;
+            if self.mode == Mode::Cache {
+                if let Some(val) = res.as_ref().ok() {
+                    self.cache
+                        .0
+                        .db()
+                        .storage
+                        .write()
+                        .entry(address)
+                        .or_default()
+                        .insert(index, *val);
+                }
+            }
+            res
         })
     }
 
@@ -655,6 +692,11 @@ impl SharedBackend {
     /// Flushes the DB to disk if caching is enabled
     pub fn flush_cache(&self) {
         self.cache.0.flush();
+    }
+
+    /// Set get_mode
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
     }
 }
 
