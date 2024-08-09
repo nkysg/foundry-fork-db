@@ -666,7 +666,7 @@ impl SharedBackend {
         self.blocking_mode.run(|| {
             let (sender, mut rx) = unbounded_channel();
             let block_id = block.into();
-            let req = BackendRequest::FullBlock(block_id.clone().into(), sender);
+            let req = BackendRequest::FullBlock(block_id, sender);
             self.backend.clone().try_send(req)?;
             tokio::runtime::Runtime::new()
                 .unwrap()
